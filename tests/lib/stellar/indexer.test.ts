@@ -127,8 +127,7 @@ describe("PaymentEventIndexer.decodeEvent (Issue #85)", () => {
   const TOKEN = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
   const BUYER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
   const MERCHANT = "GAIYNHCVTWL7MHEVQEJBZNXPPJRE5ELR6CJ5LTL74UISWA7T6BQ47HEU";
-  const ORDER_ID_HEX =
-    "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"; // 64 hex chars == 32 bytes
+  const ORDER_ID_HEX = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"; // 64 hex chars == 32 bytes
   const TX_HASH = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
   const LEDGER = 4242;
   const CLOSED_AT = "2026-09-07T01:00:00Z";
@@ -294,9 +293,7 @@ describe("PaymentEventIndexer.decodeEvent (Issue #85)", () => {
 
       const decoded = callDecodeEvent(indexer, raw);
       expect(decoded).not.toBeNull();
-      const topicKeys = Object.keys(decoded?.fields ?? {}).filter((k) =>
-        k.startsWith("topic")
-      );
+      const topicKeys = Object.keys(decoded?.fields ?? {}).filter((k) => k.startsWith("topic"));
       expect(topicKeys).toHaveLength(0);
     });
   });
@@ -505,11 +502,7 @@ describe("PaymentEventIndexer.decodeEvent (Issue #85)", () => {
     it("decodes dispatch event matching Soroban OrderShipped contract event", () => {
       const indexer = new PaymentEventIndexer();
       const raw = makeRawEvent({
-        topic: [
-          symbolToScVal("dispatch"),
-          bytes32ToScVal(ORDER_ID_HEX),
-          addressToScVal(MERCHANT),
-        ],
+        topic: [symbolToScVal("dispatch"), bytes32ToScVal(ORDER_ID_HEX), addressToScVal(MERCHANT)],
         value: xdr.ScVal.scvMap([
           new xdr.ScMapEntry({
             key: symbolToScVal("amount"),
@@ -529,11 +522,7 @@ describe("PaymentEventIndexer.decodeEvent (Issue #85)", () => {
     it("decodes refund event matching Soroban OrderRefunded contract event", () => {
       const indexer = new PaymentEventIndexer();
       const raw = makeRawEvent({
-        topic: [
-          symbolToScVal("refund"),
-          bytes32ToScVal(ORDER_ID_HEX),
-          addressToScVal(BUYER),
-        ],
+        topic: [symbolToScVal("refund"), bytes32ToScVal(ORDER_ID_HEX), addressToScVal(BUYER)],
         value: xdr.ScVal.scvMap([
           new xdr.ScMapEntry({
             key: symbolToScVal("amount"),
@@ -755,5 +744,41 @@ describe("PaymentEventIndexer overlapping-poll guard (Issue #632)", () => {
 
     expect(errors.some((e) => e.includes("getEvents failed"))).toBe(true);
     expect(calls).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("PaymentEventIndexer RPC topic filter (Issue #714)", () => {
+  const CONTRACT_ID = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";
+
+  it("constrains the getEvents filter to the watched event symbols", async () => {
+    let captured: rpc.Api.GetEventsRequest | undefined = undefined;
+    const fakeServer = {
+      getLatestLedger: vi.fn().mockResolvedValue({ sequence: 500 }),
+      getEvents: vi.fn().mockImplementation(async (req: rpc.Api.GetEventsRequest) => {
+        captured = req;
+        return { latestLedger: 500, cursor: "cursor-500", events: [] };
+      }),
+    };
+
+    const indexer = new PaymentEventIndexer({ pollMs: 1000, contractId: CONTRACT_ID });
+    (indexer as unknown as { server: unknown }).server = fakeServer;
+
+    indexer.start({ onEvent: () => {} });
+    await vi.waitFor(() => {
+      expect(fakeServer.getEvents).toHaveBeenCalled();
+    });
+    indexer.stop();
+
+    const filter = captured?.filters[0];
+    expect(filter?.type).toBe("contract");
+    expect(filter?.contractIds).toEqual([CONTRACT_ID]);
+
+    // One segment matcher per watched symbol, encoding topics[0] (the event name).
+    const segmentMatchers = (filter?.topics ?? []).map((segment) => segment[0]);
+    const expected = ["pay", "create_order", "dispatch", "refund"].map((symbol) =>
+      xdr.ScVal.scvSymbol(symbol).toXDR("base64")
+    );
+    expect(segmentMatchers).toHaveLength(4);
+    expect(segmentMatchers).toEqual(expect.arrayContaining(expected));
   });
 });

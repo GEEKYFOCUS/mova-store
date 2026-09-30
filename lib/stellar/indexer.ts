@@ -269,7 +269,13 @@ export class PaymentEventIndexer {
   }
 
   private async fetchEvents(): Promise<rpc.Api.GetEventsResponse> {
-    const filters: rpc.Api.EventFilter[] = [{ type: "contract", contractIds: [this.contractId] }];
+    const filters: rpc.Api.EventFilter[] = [
+      {
+        type: "contract",
+        contractIds: [this.contractId],
+        topics: this.topicFilters(),
+      },
+    ];
     if (this.startLedger !== undefined) {
       return this.server.getEvents({ filters, startLedger: this.startLedger });
     }
@@ -277,6 +283,15 @@ export class PaymentEventIndexer {
       return this.server.getEvents({ filters, cursor: this.cursor });
     }
     throw new Error("Indexer has no cursor or start ledger to poll from.");
+  }
+
+  /**
+   * One topic filter per watched symbol, matching `topics[0]` (the event name)
+   * at the RPC so unwatched events are never transferred or decoded. The RPC
+   * ORs the per-symbol filters and each segment is a base64-encoded `ScVal`.
+   */
+  private topicFilters(): string[][] {
+    return this.watchedSymbols.map((symbol) => [xdr.ScVal.scvSymbol(symbol).toXDR("base64")]);
   }
 
   /**
