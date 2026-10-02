@@ -1027,3 +1027,39 @@ describe("PaymentEventIndexer durable start ledger & persisted cursor (Issue #71
     expect(window.localStorage.getItem(STORAGE_KEY)).toBe("cursor-fresh");
   });
 });
+
+describe("PaymentEventIndexer RPC topic filter (Issue #714)", () => {
+  const CONTRACT_ID = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA";
+
+  it("constrains the getEvents filter to the watched event symbols", async () => {
+    let captured: rpc.Api.GetEventsRequest | undefined = undefined;
+    const fakeServer = {
+      getLatestLedger: vi.fn().mockResolvedValue({ sequence: 500 }),
+      getEvents: vi.fn().mockImplementation(async (req: rpc.Api.GetEventsRequest) => {
+        captured = req;
+        return { latestLedger: 500, cursor: "cursor-500", events: [] };
+      }),
+    };
+
+    const indexer = new PaymentEventIndexer({ pollMs: 1000, contractId: CONTRACT_ID });
+    (indexer as unknown as { server: unknown }).server = fakeServer;
+
+    indexer.start({ onEvent: () => {} });
+    await vi.waitFor(() => {
+      expect(fakeServer.getEvents).toHaveBeenCalled();
+    });
+    indexer.stop();
+
+    const filter = captured?.filters[0];
+    expect(filter?.type).toBe("contract");
+    expect(filter?.contractIds).toEqual([CONTRACT_ID]);
+
+    // One segment matcher per watched symbol, encoding topics[0] (the event name).
+    const segmentMatchers = (filter?.topics ?? []).map((segment) => segment[0]);
+    const expected = ["pay", "create_order", "dispatch", "refund"].map((symbol) =>
+      xdr.ScVal.scvSymbol(symbol).toXDR("base64")
+    );
+    expect(segmentMatchers).toHaveLength(4);
+    expect(segmentMatchers).toEqual(expect.arrayContaining(expected));
+  });
+});
