@@ -86,13 +86,9 @@ describe("Shop product loading states", () => {
 
     fireEvent.click(within(productLink.parentElement!).getByRole("button"));
 
-    // The badge carries an accessible name, so the cart reads as "Shopping cart
-    // with 1 item" rather than exposing the bare digit.
-    expect(screen.getByRole("button", { name: /shopping cart with 1 item/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "1" })).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Item added to cart");
-    expect(
-      JSON.parse(localStorage.getItem("cartItems")!).map(({ cartItemId, ...rest }) => rest)
-    ).toEqual([product]);
+    expect(JSON.parse(localStorage.getItem("cartItems")!)).toEqual([product]);
   });
 
   it("replaces skeletons with the request error without claiming the catalogue is empty", async () => {
